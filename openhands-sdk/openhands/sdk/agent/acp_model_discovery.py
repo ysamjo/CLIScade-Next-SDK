@@ -43,6 +43,7 @@ def discover_acp_models(
         acp_args=list(settings.acp_args),
         acp_session_mode=settings.acp_session_mode,
         acp_startup_timeout=settings.acp_startup_timeout,
+        acp_auth_method=settings.acp_auth_method,
         acp_isolate_data_dir=settings.acp_isolate_data_dir,
         acp_file_secrets=list(settings.acp_file_secrets),
     )
