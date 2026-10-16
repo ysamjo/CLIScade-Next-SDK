@@ -1749,6 +1749,13 @@ class ACPAgent(AgentBase):
         default_factory=list,
         description="Additional arguments for the ACP server command",
     )
+    acp_auth_method: str | None = Field(
+        default=None,
+        description=(
+            "Explicit advertised ACP authentication method; "
+            "None keeps credential-based selection."
+        ),
+    )
     acp_session_mode: str | None = Field(
         default=None,
         description=(
@@ -3055,6 +3062,7 @@ class ACPAgent(AgentBase):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=working_dir,
                 limit=_STREAM_READER_LIMIT,
             )
             assert process.stdin is not None
@@ -3128,8 +3136,17 @@ class ACPAgent(AgentBase):
             # before session creation.  We auto-detect the method from
             # the env vars that are available to the process.
             auth_methods = init_response.auth_methods or []
-            if auth_methods:
-                method_id = _select_auth_method(auth_methods, env)
+            if auth_methods or self.acp_auth_method:
+                if self.acp_auth_method is not None:
+                    if self.acp_auth_method not in {
+                        method.id for method in auth_methods
+                    }:
+                        raise ValueError(
+                            "Konfigurierte ACP-Anmeldemethode wurde nicht angeboten"
+                        )
+                    method_id = self.acp_auth_method
+                else:
+                    method_id = _select_auth_method(auth_methods, env)
                 if method_id is not None:
                     logger.info("Authenticating with ACP method: %s", method_id)
                     auth_kwargs: dict[str, Any] = {}

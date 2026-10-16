@@ -396,3 +396,12 @@ Note: This is separate from `persistence_dir` which is used for conversation sta
 </KNOWN_RACES_AND_GOTCHAS>
 
 </REPO>
+
+## CLIScade-Integrationsfork
+
+Basis ist SDK 1.55.1. Der ACP-Prozess startet im Session-Workspace; das globale
+Prozessverzeichnis darf dafür nicht geändert werden. `acp_auth_method` ist eine
+optionale, explizite Auswahl aus den tatsächlich angekündigten Auth-Methoden.
+Ohne Wert bleibt die bisherige Credential-Erkennung erhalten. Settings,
+Agent-Serialisierung, Modellabfrage und TypeScript-Schema müssen das Feld
+gemeinsam weitergeben. Niemals Google-Kontoanmeldung mit einem API-Key vortäuschen.
