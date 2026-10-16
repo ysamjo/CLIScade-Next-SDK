@@ -1,0 +1,2187 @@
+<!doctype html><html lang="de"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ACP: Workspace und Kontoauswahl</title><style>body{font:17px system-ui;max-width:1100px;margin:40px auto;padding:20px;color:#18302b;background:#f4f4ed}h1{font-size:42px}section{border-top:1px solid #81938a;padding:20px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}a{color:#12634b}svg{width:100%;height:auto}.note{border-left:6px solid #e97c37;padding:16px;background:white}</style><h1>ACP startet im tatsächlichen Workspace</h1><p class="note">Additive API: <code>acp_auth_method: str | None = None</code>. Der Standard bleibt automatische Credential-Auswahl. CodeBuddy ignoriert session/new.cwd; deshalb wird der Prozess im Workspace gestartet.</p><svg viewBox="0 0 960 220" role="img" aria-label="Vorher und nachher"><rect x="10" y="20" width="430" height="160" rx="12" fill="#e0e5df"/><text x="30" y="55">Vorher: _start_acp_server</text><text x="30" y="90">Prozess erbt Server-CWD</text><text x="30" y="125">session/new.cwd → Agent ignoriert CWD</text><rect x="490" y="20" width="450" height="160" rx="12" fill="#ffd3ae"/><text x="510" y="55">Nachher: _start_acp_server</text><text x="510" y="90">create_subprocess_exec(cwd=working_dir)</text><text x="510" y="125">acp_auth_method → angebotene Methode</text><path d="M445 100h40" stroke="#d75f18" stroke-width="4"/></svg><p>Settings → ACPAgent → Start/Authenticate; Discovery verwendet dieselbe Methode. Eine nicht angebotene Methode wird vor session/new abgewiesen. Kein globales chdir, keine Shell und keine Terminal-Wrapper.</p><h2>Nachweise</h2><p>496 ACP-Tests bestanden, inklusive tatsächlicher Stdio-Prozesse, Settings-Roundtrip, Discovery und unzulässiger Methode. Ruff und TypeScript-Build bestanden. CodeBuddy 2.168.0 hat mit vorhandenem lokalem Konto eine Datei im zugewiesenen Test-Workspace erstellt. Antigravity: Initialize und Google-Login-Start geprüft; persönliche Freigabe und Inferenz offen.</p><p>Schema wurde aus create_app().openapi() regeneriert und enthält mechanischen Generator-Drift. Die App muss den Python-Entrypoint aus dem Fork starten: Das eingefrorene Upstream-Server-Binary übernimmt eine nachträgliche SDK-Installation nicht.</p><nav><p><a href="#AGENTS.md">AGENTS.md</a></p><p><a href="#CLISCADE_NEXT.md">CLISCADE_NEXT.md</a></p><p><a href="#README.md">README.md</a></p><p><a href="#clients/typescript/src/generated/agent-server-schema.ts">clients/typescript/src/generated/agent-server-schema.ts</a></p><p><a href="#openhands-sdk/openhands/sdk/agent/acp_agent.py">openhands-sdk/openhands/sdk/agent/acp_agent.py</a></p><p><a href="#openhands-sdk/openhands/sdk/agent/acp_model_discovery.py">openhands-sdk/openhands/sdk/agent/acp_model_discovery.py</a></p><p><a href="#openhands-sdk/openhands/sdk/settings/model.py">openhands-sdk/openhands/sdk/settings/model.py</a></p><p><a href="#openhands-sdk/pyproject.toml">openhands-sdk/pyproject.toml</a></p><p><a href="#tests/sdk/agent/fake_acp_auth_server.py">tests/sdk/agent/fake_acp_auth_server.py</a></p><p><a href="#tests/sdk/agent/test_acp_start_context.py">tests/sdk/agent/test_acp_start_context.py</a></p><p><a href="#uv.lock">uv.lock</a></p></nav><section id="AGENTS.md"><h2>AGENTS.md</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/AGENTS.md">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/AGENTS.md">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/AGENTS.md b/AGENTS.md
+index 57d24f8c..0ff87899 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -396,3 +396,12 @@ Note: This is separate from `persistence_dir` which is used for conversation sta
+ &lt;/KNOWN_RACES_AND_GOTCHAS&gt;
+ 
+ &lt;/REPO&gt;
++
++## CLIScade-Integrationsfork
++
++Basis ist SDK 1.55.1. Der ACP-Prozess startet im Session-Workspace; das globale
++Prozessverzeichnis darf dafür nicht geändert werden. `acp_auth_method` ist eine
++optionale, explizite Auswahl aus den tatsächlich angekündigten Auth-Methoden.
++Ohne Wert bleibt die bisherige Credential-Erkennung erhalten. Settings,
++Agent-Serialisierung, Modellabfrage und TypeScript-Schema müssen das Feld
++gemeinsam weitergeben. Niemals Google-Kontoanmeldung mit einem API-Key vortäuschen.
+</pre></details></section><section id="CLISCADE_NEXT.md"><h2>CLISCADE_NEXT.md</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/CLISCADE_NEXT.md">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/CLISCADE_NEXT.md">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/CLISCADE_NEXT.md b/CLISCADE_NEXT.md
+new file mode 100644
+index 00000000..8709a28f
+--- /dev/null
++++ b/CLISCADE_NEXT.md
+@@ -0,0 +1,35 @@
++# CLIScade Next: ACP-Start und Kontoanmeldung
++
++Basis: offizieller SDK-Release 1.55.1; eigene Paketversion
++`1.55.1+cliscade.1`. Der Integrationsfork enthält zwei fachliche Korrekturen:
++
++1. Jeder native ACP-Prozess erhält sein eigenes `cwd` aus dem Workspace. Der
++   Prozess-CWD des Agent Servers wird nicht umgestellt. CodeBuddy 2.168.0
++   ignorierte im echten Test das `session/new.cwd` und schrieb ohne diese
++   Korrektur außerhalb des vorgesehenen Test-Workspaces.
++2. `ACPAgent.acp_auth_method` und `ACPAgentSettings.acp_auth_method` wählen eine
++   explizit angebotene ACP-Anmeldemethode. `None` bewahrt die automatische
++   Credential-Erkennung. Eine unbekannte Methode scheitert vor `session/new`.
++   Factory, JSON-Serialisierung, Modellabfrage und TypeScript-Vertrag führen
++   die Option durch. Antigravity 1.4.0 verwendet `oauth-personal` für Google.
++
++Die Funktion enthält keinen Terminal-/Headless-Adapter und implementiert weder
++OAuth noch den ACP-Transport erneut. Persönliche Logins bleiben beim nativen
++Anbieter. Das generierte TypeScript-Schema stammt aus dem kanonischen
++`create_app().openapi()` mit eingefrorenen Workspace-Abhängigkeiten.
++
++## Prüfung
++
++```sh
++uvx --from uv==0.12.23 uv sync --frozen --package openhands-agent-server --group dev
++env -u ANTHROPIC_API_KEY .venv/bin/pytest tests/sdk/agent/test_acp_start_context.py tests/sdk/agent/test_acp_model_discovery.py tests/sdk/agent/test_acp_agent.py -q
++cd clients/typescript
++npm ci
++npm run build
++```
++
++496 ACP-Tests bestanden. Der zusätzliche Prozess-Fixture prüft tatsächlichen
++Prozess-CWD, Session-CWD, Auth-Handshake, serialisierte Factory-Settings und
++Modellabfrage. Der reale CodeBuddy-Dateitest in CLIScade Next bestand nach dem
++Fix. Antigravity-Handshake und Google-Login-Start sind geprüft; eine persönliche
++Google-Kontofreigabe und authentifizierte Inferenz werden nicht behauptet.
+</pre></details></section><section id="README.md"><h2>README.md</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/README.md">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/README.md">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/README.md b/README.md
+index 386dc894..39954e39 100644
+--- a/README.md
++++ b/README.md
+@@ -1,3 +1,7 @@
++&gt; CLIScade-Next-SDK: Integrationsfork für explizite ACP-Kontoanmeldung und den
++&gt; Start nativer ACP-Prozesse im jeweiligen Workspace. Änderungen und Prüfbefehle:
++&gt; [CLISCADE_NEXT.md](CLISCADE_NEXT.md).
++
+ &lt;a name=&quot;readme-top&quot;&gt;&lt;/a&gt;
+ 
+ &lt;div align=&quot;center&quot;&gt;
+</pre></details></section><section id="clients/typescript/src/generated/agent-server-schema.ts"><h2>clients/typescript/src/generated/agent-server-schema.ts</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/clients/typescript/src/generated/agent-server-schema.ts">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/clients/typescript/src/generated/agent-server-schema.ts">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/clients/typescript/src/generated/agent-server-schema.ts b/clients/typescript/src/generated/agent-server-schema.ts
+index e9cabb72..80544d24 100644
+--- a/clients/typescript/src/generated/agent-server-schema.ts
++++ b/clients/typescript/src/generated/agent-server-schema.ts
+@@ -1,5 +1,5 @@
+ // Generated file. Do not edit by hand.
+-// Source: ghcr.io/openhands/agent-server:1.55.1-python
++// Source: CLIScade Next SDK 1.55.1+cliscade.1
+ // Regenerate with: npm run generate:agent-server-api
+ // This file is auto-generated by @hey-api/openapi-ts
+ 
+@@ -19,6 +19,12 @@ export type AcpAgentInput = {
+    * Additional arguments for the ACP server command
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -165,6 +171,12 @@ export type AcpAgentOutput = {
+    * Additional arguments for the ACP server command
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -418,6 +430,12 @@ export type AcpAgentSettings = {
+    * Additional arguments appended to the ACP server command.
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -2154,47 +2172,87 @@ export type AgentResponseResult = {
+ };
+ 
+ /**
+- * AgentSettings
++ * AlwaysConfirm
+  */
+-export type AgentSettings = {
++export type AlwaysConfirmInput = {
+   /**
+-   * Agent Kind
++   * Kind
+    */
+-  agent_kind?: &#x27;openhands&#x27; | &#x27;acp&#x27; | null;
+-  mcp_config: McpConfig;
++  kind?: &#x27;AlwaysConfirm&#x27;;
++};
++
++/**
++ * AlwaysConfirm
++ */
++export type AlwaysConfirmOutput = {
+   /**
+-   * Schema Version
++   * Kind
+    */
+-  schema_version?: number | null;
+-  [key: string]: unknown;
++  kind: &#x27;AlwaysConfirm&#x27;;
+ };
+ 
+ /**
+- * AgentSettingsPatch
++ * Annotation
++ *
++ * A URL citation when using web search.
+  */
+-export type AgentSettingsPatch = {
+-  mcp_config?: McpConfigPatch | null;
++export type Annotation = {
++  /**
++   * Type
++   */
++  type: &#x27;url_citation&#x27;;
++  url_citation: AnnotationUrlCitation;
+   [key: string]: unknown;
+ };
+ 
+ /**
+- * AlwaysConfirm
++ * AnnotationURLCitation
++ *
++ * A URL citation when using web search.
+  */
+-export type AlwaysConfirmInput = {
++export type AnnotationUrlCitation = {
+   /**
+-   * Kind
++   * End Index
+    */
+-  kind?: &#x27;AlwaysConfirm&#x27;;
++  end_index: number;
++  /**
++   * Start Index
++   */
++  start_index: number;
++  /**
++   * Title
++   */
++  title: string;
++  /**
++   * Url
++   */
++  url: string;
++  [key: string]: unknown;
+ };
+ 
+ /**
+- * AlwaysConfirm
++ * AppBackendSessionResponse
++ *
++ * Browser bootstrap result for one running Canvas App backend.
++ *
++ * The session credential is delivered only as an HttpOnly cookie. ``ingress_url``
++ * contains no credential and must be loaded from a separate browser origin. That
++ * origin is the isolation boundary, so frames retain their origin for cookies,
++ * workers, WebSockets, and Origin-based request validation.
+  */
+-export type AlwaysConfirmOutput = {
++export type AppBackendSessionResponse = {
+   /**
+-   * Kind
++   * Expires At
+    */
+-  kind: &#x27;AlwaysConfirm&#x27;;
++  expires_at: string;
++  /**
++   * Iframe Sandbox
++   */
++  iframe_sandbox?: string;
++  /**
++   * Ingress Url
++   */
++  ingress_url: string;
+ };
+ 
+ /**
+@@ -3593,6 +3651,196 @@ export type CanvasExtensionPage = {
+   title: string;
+ };
+ 
++/**
++ * ChatCompletion
++ *
++ * Represents a chat completion response returned by model, based on the provided input.
++ */
++export type ChatCompletion = {
++  /**
++   * Choices
++   */
++  choices: Array&lt;Choice&gt;;
++  /**
++   * Created
++   */
++  created: number;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Object
++   */
++  object: &#x27;chat.completion&#x27;;
++  /**
++   * Service Tier
++   */
++  service_tier?: &#x27;auto&#x27; | &#x27;default&#x27; | &#x27;flex&#x27; | &#x27;scale&#x27; | &#x27;priority&#x27; | null;
++  /**
++   * System Fingerprint
++   */
++  system_fingerprint?: string | null;
++  usage?: CompletionUsage | null;
++  [key: string]: unknown;
++};
++
++/**
++ * ChatCompletionAudio
++ *
++ * If the audio output modality is requested, this object contains data
++ * about the audio response from the model. [Learn more](https://platform.openai.com/docs/guides/audio).
++ */
++export type ChatCompletionAudio = {
++  /**
++   * Data
++   */
++  data: string;
++  /**
++   * Expires At
++   */
++  expires_at: number;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Transcript
++   */
++  transcript: string;
++  [key: string]: unknown;
++};
++
++/**
++ * ChatCompletionMessage
++ *
++ * A chat completion message generated by the model.
++ */
++export type ChatCompletionMessage = {
++  /**
++   * Annotations
++   */
++  annotations?: Array&lt;Annotation&gt; | null;
++  audio?: ChatCompletionAudio | null;
++  /**
++   * Content
++   */
++  content?: string | null;
++  function_call?: FunctionCall | null;
++  /**
++   * Refusal
++   */
++  refusal?: string | null;
++  /**
++   * Role
++   */
++  role: &#x27;assistant&#x27;;
++  /**
++   * Tool Calls
++   */
++  tool_calls?: Array&lt;
++    ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall
++  &gt; | null;
++  [key: string]: unknown;
++};
++
++/**
++ * ChatCompletionMessageCustomToolCall
++ *
++ * A call to a custom tool created by the model.
++ */
++export type ChatCompletionMessageCustomToolCall = {
++  custom: Custom;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Type
++   */
++  type: &#x27;custom&#x27;;
++  [key: string]: unknown;
++};
++
++/**
++ * ChatCompletionMessageFunctionToolCall
++ *
++ * A call to a function tool created by the model.
++ */
++export type ChatCompletionMessageFunctionToolCall = {
++  function: Function;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Type
++   */
++  type: &#x27;function&#x27;;
++  [key: string]: unknown;
++};
++
++/**
++ * ChatCompletionTokenLogprob
++ */
++export type ChatCompletionTokenLogprob = {
++  /**
++   * Bytes
++   */
++  bytes?: Array&lt;number&gt; | null;
++  /**
++   * Logprob
++   */
++  logprob: number;
++  /**
++   * Token
++   */
++  token: string;
++  /**
++   * Top Logprobs
++   */
++  top_logprobs: Array&lt;TopLogprob&gt;;
++  [key: string]: unknown;
++};
++
++/**
++ * Choice
++ */
++export type Choice = {
++  /**
++   * Finish Reason
++   */
++  finish_reason: &#x27;stop&#x27; | &#x27;length&#x27; | &#x27;tool_calls&#x27; | &#x27;content_filter&#x27; | &#x27;function_call&#x27;;
++  /**
++   * Index
++   */
++  index: number;
++  logprobs?: ChoiceLogprobs | null;
++  message: ChatCompletionMessage;
++  [key: string]: unknown;
++};
++
++/**
++ * ChoiceLogprobs
++ *
++ * Log probability information for the choice.
++ */
++export type ChoiceLogprobs = {
++  /**
++   * Content
++   */
++  content?: Array&lt;ChatCompletionTokenLogprob&gt; | null;
++  /**
++   * Refusal
++   */
++  refusal?: Array&lt;ChatCompletionTokenLogprob&gt; | null;
++  [key: string]: unknown;
++};
++
+ /**
+  * ClassifyAndSwitchLLMAction
+  *
+@@ -3890,6 +4138,54 @@ export type CmdOutputMetadata = {
+   working_dir?: string | null;
+ };
+ 
++/**
++ * CompletionTokensDetails
++ *
++ * Breakdown of tokens used in a completion.
++ */
++export type CompletionTokensDetails = {
++  /**
++   * Accepted Prediction Tokens
++   */
++  accepted_prediction_tokens?: number | null;
++  /**
++   * Audio Tokens
++   */
++  audio_tokens?: number | null;
++  /**
++   * Reasoning Tokens
++   */
++  reasoning_tokens?: number | null;
++  /**
++   * Rejected Prediction Tokens
++   */
++  rejected_prediction_tokens?: number | null;
++  [key: string]: unknown;
++};
++
++/**
++ * CompletionUsage
++ *
++ * Usage statistics for the completion request.
++ */
++export type CompletionUsage = {
++  /**
++   * Completion Tokens
++   */
++  completion_tokens: number;
++  completion_tokens_details?: CompletionTokensDetails | null;
++  /**
++   * Prompt Tokens
++   */
++  prompt_tokens: number;
++  prompt_tokens_details?: PromptTokensDetails | null;
++  /**
++   * Total Tokens
++   */
++  total_tokens: number;
++  [key: string]: unknown;
++};
++
+ /**
+  * Condensation
+  *
+@@ -4502,6 +4798,26 @@ export type ConversationStats = {
+   [key: string]: unknown;
+ };
+ 
++/**
++ * Cost
++ */
++export type Cost = {
++  /**
++   * Cost
++   *
++   * Cost must be non-negative
++   */
++  cost: number;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Timestamp
++   */
++  timestamp?: number;
++};
++
+ export type CriticBaseInput =
+   | ({
+       kind: &#x27;openhands__sdk__critic__impl__agent_finished__AgentFinishedCritic-Input__1&#x27;;
+@@ -4558,6 +4874,23 @@ export type CriticResult = {
+   score: number;
+ };
+ 
++/**
++ * Custom
++ *
++ * The custom tool that the model called.
++ */
++export type Custom = {
++  /**
++   * Input
++   */
++  input: string;
++  /**
++   * Name
++   */
++  name: string;
++  [key: string]: unknown;
++};
++
+ /**
+  * DelegateAction
+  *
+@@ -5511,22 +5844,58 @@ export type ForkConversationRequest = {
+ };
+ 
+ /**
+- * GitChange
++ * Function
++ *
++ * The function that the model called.
+  */
+-export type GitChange = {
++export type Function = {
+   /**
+-   * Path
++   * Arguments
+    */
+-  path: string;
+-  status: GitChangeStatus;
++  arguments: string;
++  /**
++   * Name
++   */
++  name: string;
++  [key: string]: unknown;
+ };
+ 
+ /**
+- * GitChangeStatus
++ * FunctionCall
++ *
++ * Deprecated and replaced by `tool_calls`.
++ *
++ * The name and arguments of a function that should be called, as generated by the model.
+  */
+-export type GitChangeStatus = &#x27;MOVED&#x27; | &#x27;ADDED&#x27; | &#x27;DELETED&#x27; | &#x27;UPDATED&#x27;;
+-
+-/**
++export type FunctionCall = {
++  /**
++   * Arguments
++   */
++  arguments: string;
++  /**
++   * Name
++   */
++  name: string;
++  [key: string]: unknown;
++};
++
++/**
++ * GitChange
++ */
++export type GitChange = {
++  /**
++   * Path
++   */
++  path: string;
++  status: GitChangeStatus;
++};
++
++/**
++ * GitChangeStatus
++ */
++export type GitChangeStatus = &#x27;MOVED&#x27; | &#x27;ADDED&#x27; | &#x27;DELETED&#x27; | &#x27;UPDATED&#x27;;
++
++/**
+  * GitCommit
+  */
+ export type GitCommit = {
+@@ -6021,6 +6390,16 @@ export type HttpValidationError = {
+   detail?: Array&lt;ValidationError&gt;;
+ };
+ 
++/**
++ * HealthStatus
++ */
++export type HealthStatus = {
++  /**
++   * Status
++   */
++  status: string;
++};
++
+ /**
+  * HomeResponse
+  */
+@@ -8212,29 +8591,6 @@ export type McpApiKeyAuthCredentialOutput = {
+   value?: string | null;
+ };
+ 
+-/**
+- * MCPAuthCredential
+- */
+-export type McpAuthCredential =
+-  | ({
+-      strategy: &#x27;none&#x27;;
+-    } &amp; McpNoneAuthCredential)
+-  | ({
+-      strategy: &#x27;api_key&#x27;;
+-    } &amp; McpApiKeyAuthCredentialOutput)
+-  | ({
+-      strategy: &#x27;bearer&#x27;;
+-    } &amp; McpBearerAuthCredentialOutput)
+-  | ({
+-      strategy: &#x27;basic&#x27;;
+-    } &amp; McpBasicAuthCredentialOutput)
+-  | ({
+-      strategy: &#x27;header&#x27;;
+-    } &amp; McpHeaderAuthCredentialOutput)
+-  | ({
+-      strategy: &#x27;oauth2&#x27;;
+-    } &amp; McpoAuthAuthCredentialOutput);
+-
+ /**
+  * MCPBasicAuthCredential
+  */
+@@ -8651,95 +9007,6 @@ export type McpoAuthTokenStateOutput = {
+   [key: string]: unknown;
+ };
+ 
+-/**
+- * MCPServer
+- *
+- * One MCP server in the settings DataModel.
+- */
+-export type McpServer = {
+-  /**
+-   * Args
+-   */
+-  args?: Array&lt;string&gt; | null;
+-  /**
+-   * Auth
+-   */
+-  auth?:
+-    | ({
+-        strategy: &#x27;none&#x27;;
+-      } &amp; McpNoneAuthCredential)
+-    | ({
+-        strategy: &#x27;api_key&#x27;;
+-      } &amp; McpApiKeyAuthCredentialOutput)
+-    | ({
+-        strategy: &#x27;bearer&#x27;;
+-      } &amp; McpBearerAuthCredentialOutput)
+-    | ({
+-        strategy: &#x27;basic&#x27;;
+-      } &amp; McpBasicAuthCredentialOutput)
+-    | ({
+-        strategy: &#x27;header&#x27;;
+-      } &amp; McpHeaderAuthCredentialOutput)
+-    | ({
+-        strategy: &#x27;oauth2&#x27;;
+-      } &amp; McpoAuthAuthCredentialOutput)
+-    | null;
+-  /**
+-   * Command
+-   */
+-  command?: string | null;
+-  /**
+-   * Cwd
+-   */
+-  cwd?: string | null;
+-  /**
+-   * Description
+-   */
+-  description?: string | null;
+-  /**
+-   * Enabled
+-   *
+-   * Whether this server is exposed to the agent. A disabled server stays fully configured -- including its secrets -- but is skipped when MCP tools are created and when servers are forwarded to an ACP subprocess.
+-   */
+-  enabled?: boolean;
+-  /**
+-   * Env
+-   */
+-  env?: {
+-    [key: string]: string | null;
+-  } | null;
+-  /**
+-   * Headers
+-   */
+-  headers?: {
+-    [key: string]: string | null;
+-  } | null;
+-  /**
+-   * Icon
+-   */
+-  icon?: string | null;
+-  /**
+-   * Keep Alive
+-   */
+-  keep_alive?: boolean | null;
+-  /**
+-   * Sse Read Timeout
+-   */
+-  sse_read_timeout?: number | null;
+-  /**
+-   * Timeout
+-   */
+-  timeout?: number | null;
+-  /**
+-   * Transport
+-   */
+-  transport?: &#x27;stdio&#x27; | &#x27;http&#x27; | &#x27;sse&#x27; | &#x27;streamable-http&#x27; | null;
+-  /**
+-   * Url
+-   */
+-  url?: string | null;
+-};
+-
+ /**
+  * MCPServer
+  *
+@@ -9066,17 +9333,6 @@ export type McpTestRequest = {
+   tool_call?: McpToolCallSpec | null;
+ };
+ 
+-/**
+- * MCPTestResponse
+- */
+-export type McpTestResponse =
+-  | ({
+-      ok: true;
+-    } &amp; McpTestSuccess)
+-  | ({
+-      ok: false;
+-    } &amp; McpTestFailure);
+-
+ /**
+  * MCPTestSuccess
+  *
+@@ -9639,6 +9895,59 @@ export type MetaProfileMutationResponse = {
+   name: string;
+ };
+ 
++/**
++ * Metrics
++ *
++ * Metrics class can record various metrics during running and evaluation.
++ * We track:
++ * - accumulated_cost and costs
++ * - max_budget_per_task (budget limit)
++ * - A list of ResponseLatency
++ * - A list of TokenUsage (one per call).
++ */
++export type Metrics = {
++  /**
++   * Accumulated Cost
++   *
++   * Total accumulated cost, must be non-negative
++   */
++  accumulated_cost?: number;
++  /**
++   * Accumulated token usage across all calls
++   */
++  accumulated_token_usage?: TokenUsage | null;
++  /**
++   * Costs
++   *
++   * List of individual costs
++   */
++  costs?: Array&lt;Cost&gt;;
++  /**
++   * Max Budget Per Task
++   *
++   * Maximum budget per task
++   */
++  max_budget_per_task?: number | null;
++  /**
++   * Model Name
++   *
++   * Name of the model
++   */
++  model_name?: string;
++  /**
++   * Response Latencies
++   *
++   * List of response latencies
++   */
++  response_latencies?: Array&lt;ResponseLatency&gt;;
++  /**
++   * Token Usages
++   *
++   * List of token usage records
++   */
++  token_usages?: Array&lt;TokenUsage&gt;;
++};
++
+ /**
+  * MetricsSnapshot
+  *
+@@ -9671,6 +9980,31 @@ export type MetricsSnapshot = {
+   model_name?: string;
+ };
+ 
++/**
++ * Model
++ *
++ * Describes an OpenAI model offering that can be used with the API.
++ */
++export type Model = {
++  /**
++   * Created
++   */
++  created: number;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Object
++   */
++  object: &#x27;model&#x27;;
++  /**
++   * Owned By
++   */
++  owned_by: string;
++  [key: string]: unknown;
++};
++
+ /**
+  * ModelsResponse
+  *
+@@ -9893,7 +10227,309 @@ export type ObservationEvent = {
+    *
+    * The tool name that this observation is responding to
+    */
+-  tool_name: string;
++  tool_name: string;
++};
++
++/**
++ * OpenAIChatCompletionRequest
++ */
++export type OpenAiChatCompletionRequest = {
++  /**
++   * Messages
++   */
++  messages: Array&lt;OpenAiChatMessage&gt;;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Stream
++   */
++  stream?: boolean;
++  stream_options?: OpenAiStreamOptions | null;
++};
++
++/**
++ * OpenAIChatMessage
++ */
++export type OpenAiChatMessage = {
++  /**
++   * Content
++   */
++  content?: string | Array&lt;OpenAiContentPart&gt; | null;
++  /**
++   * Role
++   */
++  role: &#x27;system&#x27; | &#x27;developer&#x27; | &#x27;user&#x27; | &#x27;assistant&#x27; | &#x27;tool&#x27;;
++};
++
++/**
++ * OpenAIContentPart
++ */
++export type OpenAiContentPart = {
++  /**
++   * Image Url
++   */
++  image_url?: OpenAiImageUrl | string | null;
++  /**
++   * Text
++   */
++  text?: string | null;
++  /**
++   * Type
++   */
++  type: string;
++};
++
++/**
++ * OpenAIImageURL
++ */
++export type OpenAiImageUrl = {
++  /**
++   * Url
++   */
++  url: string;
++};
++
++/**
++ * OpenAIModelListResponse
++ */
++export type OpenAiModelListResponse = {
++  /**
++   * Data
++   */
++  data: Array&lt;Model&gt;;
++  /**
++   * Object
++   */
++  object?: &#x27;list&#x27;;
++};
++
++/**
++ * OpenAIResponse
++ */
++export type OpenAiResponse = {
++  /**
++   * Completed At
++   */
++  completed_at: number;
++  /**
++   * Created At
++   */
++  created_at: number;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Instructions
++   */
++  instructions?: string | null;
++  /**
++   * Metadata
++   */
++  metadata?: {
++    [key: string]: string;
++  } | null;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Object
++   */
++  object?: &#x27;response&#x27;;
++  /**
++   * Output
++   */
++  output: Array&lt;OpenAiResponseOutputMessage&gt;;
++  /**
++   * Parallel Tool Calls
++   */
++  parallel_tool_calls?: boolean;
++  /**
++   * Previous Response Id
++   */
++  previous_response_id?: string | null;
++  /**
++   * Status
++   */
++  status?: &#x27;completed&#x27;;
++  /**
++   * Tool Choice
++   */
++  tool_choice?: &#x27;none&#x27;;
++  /**
++   * Tools
++   */
++  tools: Array&lt;{
++    [key: string]: string;
++  }&gt;;
++  usage: OpenAiResponseUsage;
++};
++
++/**
++ * OpenAIResponseInputContentPart
++ */
++export type OpenAiResponseInputContentPart = {
++  /**
++   * Image Url
++   */
++  image_url?: string | null;
++  /**
++   * Text
++   */
++  text?: string | null;
++  /**
++   * Type
++   */
++  type: string;
++};
++
++/**
++ * OpenAIResponseInputMessage
++ */
++export type OpenAiResponseInputMessage = {
++  /**
++   * Content
++   */
++  content: string | Array&lt;OpenAiResponseInputContentPart&gt;;
++  /**
++   * Role
++   */
++  role: &#x27;system&#x27; | &#x27;developer&#x27; | &#x27;user&#x27; | &#x27;assistant&#x27;;
++};
++
++/**
++ * OpenAIResponseInputTokensDetails
++ */
++export type OpenAiResponseInputTokensDetails = {
++  /**
++   * Cached Tokens
++   */
++  cached_tokens: number;
++};
++
++/**
++ * OpenAIResponseOutputMessage
++ */
++export type OpenAiResponseOutputMessage = {
++  /**
++   * Content
++   */
++  content: Array&lt;OpenAiResponseOutputText&gt;;
++  /**
++   * Id
++   */
++  id: string;
++  /**
++   * Role
++   */
++  role?: &#x27;assistant&#x27;;
++  /**
++   * Status
++   */
++  status?: &#x27;completed&#x27;;
++  /**
++   * Type
++   */
++  type?: &#x27;message&#x27;;
++};
++
++/**
++ * OpenAIResponseOutputText
++ */
++export type OpenAiResponseOutputText = {
++  /**
++   * Annotations
++   */
++  annotations: Array&lt;{
++    [key: string]: unknown;
++  }&gt;;
++  /**
++   * Text
++   */
++  text: string;
++  /**
++   * Type
++   */
++  type?: &#x27;output_text&#x27;;
++};
++
++/**
++ * OpenAIResponseOutputTokensDetails
++ */
++export type OpenAiResponseOutputTokensDetails = {
++  /**
++   * Reasoning Tokens
++   */
++  reasoning_tokens: number;
++};
++
++/**
++ * OpenAIResponseRequest
++ */
++export type OpenAiResponseRequest = {
++  /**
++   * Input
++   */
++  input: string | Array&lt;OpenAiResponseInputMessage&gt;;
++  /**
++   * Instructions
++   */
++  instructions?: string | null;
++  /**
++   * Metadata
++   */
++  metadata?: {
++    [key: string]: string;
++  } | null;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Previous Response Id
++   */
++  previous_response_id?: string | null;
++  /**
++   * Store
++   */
++  store?: boolean;
++  /**
++   * Stream
++   */
++  stream?: boolean;
++};
++
++/**
++ * OpenAIResponseUsage
++ */
++export type OpenAiResponseUsage = {
++  /**
++   * Input Tokens
++   */
++  input_tokens: number;
++  input_tokens_details: OpenAiResponseInputTokensDetails;
++  /**
++   * Output Tokens
++   */
++  output_tokens: number;
++  output_tokens_details: OpenAiResponseOutputTokensDetails;
++  /**
++   * Total Tokens
++   */
++  total_tokens: number;
++};
++
++/**
++ * OpenAIStreamOptions
++ */
++export type OpenAiStreamOptions = {
++  /**
++   * Include Usage
++   */
++  include_usage?: boolean;
+ };
+ 
+ /**
+@@ -10840,6 +11476,23 @@ export type ProfileVerificationSettings = {
+   max_refinement_iterations?: number;
+ };
+ 
++/**
++ * PromptTokensDetails
++ *
++ * Breakdown of tokens used in the prompt.
++ */
++export type PromptTokensDetails = {
++  /**
++   * Audio Tokens
++   */
++  audio_tokens?: number | null;
++  /**
++   * Cached Tokens
++   */
++  cached_tokens?: number | null;
++  [key: string]: unknown;
++};
++
+ /**
+  * ProviderConnectionCreateRequest
+  */
+@@ -11096,63 +11749,6 @@ export type RedactedThinkingBlock = {
+   type?: &#x27;redacted_thinking&#x27;;
+ };
+ 
+-/**
+- * RemoteMCPServer
+- *
+- * Legacy remote MCP server spec accepted by the public REST API.
+- */
+-export type RemoteMcpServer = {
+-  /**
+-   * Auth
+-   */
+-  auth?:
+-    | ({
+-        strategy: &#x27;none&#x27;;
+-      } &amp; McpNoneAuthCredential)
+-    | ({
+-        strategy: &#x27;api_key&#x27;;
+-      } &amp; McpApiKeyAuthCredentialInput)
+-    | ({
+-        strategy: &#x27;bearer&#x27;;
+-      } &amp; McpBearerAuthCredentialInput)
+-    | ({
+-        strategy: &#x27;basic&#x27;;
+-      } &amp; McpBasicAuthCredentialInput)
+-    | ({
+-        strategy: &#x27;header&#x27;;
+-      } &amp; McpHeaderAuthCredentialInput)
+-    | ({
+-        strategy: &#x27;oauth2&#x27;;
+-      } &amp; McpoAuthAuthCredentialInput)
+-    | null;
+-  /**
+-   * Headers
+-   */
+-  headers?: {
+-    [key: string]: string;
+-  };
+-  /**
+-   * Keep Alive
+-   */
+-  keep_alive?: boolean | null;
+-  /**
+-   * Sse Read Timeout
+-   */
+-  sse_read_timeout?: number | null;
+-  /**
+-   * Timeout
+-   */
+-  timeout?: number | null;
+-  /**
+-   * Type
+-   */
+-  type: &#x27;http&#x27; | &#x27;shttp&#x27; | &#x27;streamable-http&#x27; | &#x27;sse&#x27;;
+-  /**
+-   * Url
+-   */
+-  url: string;
+-};
+-
+ /**
+  * RemoteWorkspace
+  *
+@@ -11239,6 +11835,28 @@ export type RenameProfileRequest = {
+   new_name: string;
+ };
+ 
++/**
++ * ResponseLatency
++ *
++ * Metric tracking the round-trip time per completion call.
++ */
++export type ResponseLatency = {
++  /**
++   * Latency
++   *
++   * Latency must be non-negative
++   */
++  latency: number;
++  /**
++   * Model
++   */
++  model: string;
++  /**
++   * Response Id
++   */
++  response_id: string;
++};
++
+ /**
+  * SandboxConfig
+  *
+@@ -11558,6 +12176,86 @@ export type ServerErrorEvent = {
+   timestamp?: string;
+ };
+ 
++/**
++ * ServerInfo
++ */
++export type ServerInfo = {
++  /**
++   * App Backend Ingress Url
++   *
++   * Separate browser origin for authenticated Canvas App backend sessions
++   */
++  app_backend_ingress_url?: string | null;
++  /**
++   * Build Git Ref
++   */
++  build_git_ref?: string;
++  /**
++   * Build Git Sha
++   */
++  build_git_sha?: string;
++  /**
++   * Capabilities
++   */
++  capabilities?: Array&lt;string&gt;;
++  /**
++   * Conversation Runtime
++   */
++  conversation_runtime?: &#x27;local&#x27; | &#x27;docker&#x27;;
++  /**
++   * Docs
++   */
++  docs?: string;
++  /**
++   * Idle Time
++   */
++  idle_time: number;
++  /**
++   * Max Foreground Terminal Timeout Seconds
++   */
++  max_foreground_terminal_timeout_seconds?: number | null;
++  /**
++   * Python Version
++   */
++  python_version?: string;
++  /**
++   * Redoc
++   */
++  redoc?: string;
++  /**
++   * Runtime Idle Timeout Seconds
++   */
++  runtime_idle_timeout_seconds?: number | null;
++  /**
++   * Sdk Version
++   */
++  sdk_version?: string;
++  /**
++   * Title
++   */
++  title?: string;
++  /**
++   * Tools Version
++   */
++  tools_version?: string;
++  /**
++   * Uptime
++   */
++  uptime: number;
++  /**
++   * Usable Tools
++   */
++  usable_tools?: Array&lt;string&gt;;
++  /**
++   * Version
++   */
++  version?: string;
++  /**
++   * Workspace Version
++   */
++  workspace_version?: string;
++};
++
+ /**
+  * SetConfirmationPolicyRequest
+  *
+@@ -12466,38 +13164,6 @@ export type StaticSecretOutput = {
+   value?: null;
+ };
+ 
+-/**
+- * StdioMCPServer
+- *
+- * Legacy stdio MCP server spec accepted by the public REST API.
+- */
+-export type StdioMcpServer = {
+-  /**
+-   * Args
+-   */
+-  args?: Array&lt;string&gt;;
+-  /**
+-   * Command
+-   *
+-   * Executable to invoke
+-   */
+-  command: string;
+-  /**
+-   * Cwd
+-   */
+-  cwd?: string | null;
+-  /**
+-   * Env
+-   */
+-  env?: {
+-    [key: string]: string;
+-  };
+-  /**
+-   * Type
+-   */
+-  type?: &#x27;stdio&#x27;;
+-};
+-
+ /**
+  * StreamingDeltaEvent
+  *
+@@ -14105,6 +14771,25 @@ export type ToolShieldLlmSecurityAnalyzerOutput = {
+   safety_experiences?: string;
+ };
+ 
++/**
++ * TopLogprob
++ */
++export type TopLogprob = {
++  /**
++   * Bytes
++   */
++  bytes?: Array&lt;number&gt; | null;
++  /**
++   * Logprob
++   */
++  logprob: number;
++  /**
++   * Token
++   */
++  token: string;
++  [key: string]: unknown;
++};
++
+ export type TraceMetadataValue =
+   | string
+   | boolean
+@@ -15221,6 +15906,12 @@ export type AcpAgentInputWritable = {
+    * Additional arguments for the ACP server command
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -15367,6 +16058,12 @@ export type AcpAgentOutputWritable = {
+    * Additional arguments for the ACP server command
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -15524,6 +16221,12 @@ export type AcpAgentSettingsWritable = {
+    * Additional arguments appended to the ACP server command.
+    */
+   acp_args?: Array&lt;string&gt;;
++  /**
++   * Acp Auth Method
++   *
++   * Explicit advertised ACP authentication method; None keeps credential-based selection.
++   */
++  acp_auth_method?: string | null;
+   /**
+    * Acp Command
+    *
+@@ -16349,14 +17052,6 @@ export type AgentLaunchAdditionsWritable = {
+   system_message_suffix_append?: string | null;
+ };
+ 
+-/**
+- * AgentSettingsPatch
+- */
+-export type AgentSettingsPatchWritable = {
+-  mcp_config?: McpConfigPatchWritable | null;
+-  [key: string]: unknown;
+-};
+-
+ /**
+  * AskOracleTool
+  *
+@@ -19206,109 +19901,52 @@ export type ProviderConnectionCreateRequestWritable = {
+  */
+ export type ProviderConnectionUpdateRequestWritable = {
+   /**
+-   * Api Key
+-   */
+-  api_key?: string | null;
+-  /**
+-   * Base Url
+-   */
+-  base_url?: string | null;
+-  /**
+-   * Display Name
+-   */
+-  display_name?: string | null;
+-  /**
+-   * Provider
+-   */
+-  provider?: string | null;
+-};
+-
+-/**
+- * ReadFileTool
+- *
+- * Tool for reading file contents with pagination support.
+- */
+-export type ReadFileToolWritable = {
+-  /**
+-   * Action Type
+-   */
+-  action_type: string;
+-  annotations?: OpenhandsSdkToolToolToolAnnotations | null;
+-  /**
+-   * Description
+-   */
+-  description: string;
+-  /**
+-   * Kind
+-   */
+-  kind: &#x27;ReadFileTool&#x27;;
+-  /**
+-   * Meta
+-   */
+-  meta?: {
+-    [key: string]: unknown;
+-  } | null;
+-  /**
+-   * Observation Type
+-   */
+-  observation_type?: string | null;
+-};
+-
+-/**
+- * RemoteMCPServer
+- *
+- * Legacy remote MCP server spec accepted by the public REST API.
+- */
+-export type RemoteMcpServerWritable = {
+-  /**
+-   * Auth
+-   */
+-  auth?:
+-    | ({
+-        strategy: &#x27;none&#x27;;
+-      } &amp; McpNoneAuthCredential)
+-    | ({
+-        strategy: &#x27;api_key&#x27;;
+-      } &amp; McpApiKeyAuthCredentialInputWritable)
+-    | ({
+-        strategy: &#x27;bearer&#x27;;
+-      } &amp; McpBearerAuthCredentialInputWritable)
+-    | ({
+-        strategy: &#x27;basic&#x27;;
+-      } &amp; McpBasicAuthCredentialInputWritable)
+-    | ({
+-        strategy: &#x27;header&#x27;;
+-      } &amp; McpHeaderAuthCredentialInputWritable)
+-    | ({
+-        strategy: &#x27;oauth2&#x27;;
+-      } &amp; McpoAuthAuthCredentialInputWritable)
+-    | null;
+-  /**
+-   * Headers
++   * Api Key
+    */
+-  headers?: {
+-    [key: string]: string;
+-  };
++  api_key?: string | null;
+   /**
+-   * Keep Alive
++   * Base Url
+    */
+-  keep_alive?: boolean | null;
++  base_url?: string | null;
+   /**
+-   * Sse Read Timeout
++   * Display Name
+    */
+-  sse_read_timeout?: number | null;
++  display_name?: string | null;
+   /**
+-   * Timeout
++   * Provider
+    */
+-  timeout?: number | null;
++  provider?: string | null;
++};
++
++/**
++ * ReadFileTool
++ *
++ * Tool for reading file contents with pagination support.
++ */
++export type ReadFileToolWritable = {
+   /**
+-   * Type
++   * Action Type
+    */
+-  type: &#x27;http&#x27; | &#x27;shttp&#x27; | &#x27;streamable-http&#x27; | &#x27;sse&#x27;;
++  action_type: string;
++  annotations?: OpenhandsSdkToolToolToolAnnotations | null;
+   /**
+-   * Url
++   * Description
+    */
+-  url: string;
++  description: string;
++  /**
++   * Kind
++   */
++  kind: &#x27;ReadFileTool&#x27;;
++  /**
++   * Meta
++   */
++  meta?: {
++    [key: string]: unknown;
++  } | null;
++  /**
++   * Observation Type
++   */
++  observation_type?: string | null;
+ };
+ 
+ /**
+@@ -20770,6 +21408,38 @@ export type RemoteMcpServerSpecWritable = {
+   url: string;
+ };
+ 
++export type GetServerInfoGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/&#x27;;
++};
++
++export type GetServerInfoGetResponses = {
++  /**
++   * Successful Response
++   */
++  200: ServerInfo;
++};
++
++export type GetServerInfoGetResponse = GetServerInfoGetResponses[keyof GetServerInfoGetResponses];
++
++export type AliveAliveGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/alive&#x27;;
++};
++
++export type AliveAliveGetResponses = {
++  /**
++   * Successful Response
++   */
++  200: HealthStatus;
++};
++
++export type AliveAliveGetResponse = AliveAliveGetResponses[keyof AliveAliveGetResponses];
++
+ export type DiscoverModelsApiAcpModelsPostData = {
+   body: AcpModelDiscoveryRequestWritable;
+   path?: never;
+@@ -26375,3 +27045,259 @@ export type AddWorkspaceParentsApiWorkspacesParentsPostResponses = {
+ 
+ export type AddWorkspaceParentsApiWorkspacesParentsPostResponse =
+   AddWorkspaceParentsApiWorkspacesParentsPostResponses[keyof AddWorkspaceParentsApiWorkspacesParentsPostResponses];
++
++export type DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteData = {
++  body?: never;
++  path: {
++    /**
++     * Extension Name
++     *
++     * Installed Canvas App name
++     */
++    extension_name: string;
++  };
++  query?: never;
++  url: &#x27;/app-backends/{extension_name}/session&#x27;;
++};
++
++export type DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteErrors = {
++  /**
++   * Missing or invalid X-Session-API-Key header
++   */
++  401: unknown;
++  /**
++   * Origin is not allowed
++   */
++  403: unknown;
++  /**
++   * Validation Error
++   */
++  422: HttpValidationError;
++};
++
++export type DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteError =
++  DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteErrors[keyof DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteErrors];
++
++export type DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteResponses = {
++  /**
++   * Browser session revoked and cookie cleared
++   */
++  204: void;
++};
++
++export type DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteResponse =
++  DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteResponses[keyof DeleteAppBackendSessionEndpointAppBackendsExtensionNameSessionDeleteResponses];
++
++export type CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostData = {
++  body?: never;
++  path: {
++    /**
++     * Extension Name
++     *
++     * Installed Canvas App name
++     */
++    extension_name: string;
++  };
++  query?: never;
++  url: &#x27;/app-backends/{extension_name}/session&#x27;;
++};
++
++export type CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostErrors = {
++  /**
++   * Missing or invalid X-Session-API-Key header
++   */
++  401: unknown;
++  /**
++   * Origin is not allowed
++   */
++  403: unknown;
++  /**
++   * Ingress does not use a separate browser origin
++   */
++  409: unknown;
++  /**
++   * Validation Error
++   */
++  422: HttpValidationError;
++  /**
++   * Backend is unavailable or ingress is not configured
++   */
++  503: unknown;
++};
++
++export type CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostError =
++  CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostErrors[keyof CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostErrors];
++
++export type CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostResponses = {
++  /**
++   * Successful Response
++   */
++  200: AppBackendSessionResponse;
++};
++
++export type CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostResponse =
++  CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostResponses[keyof CreateAppBackendSessionEndpointAppBackendsExtensionNameSessionPostResponses];
++
++export type HealthHealthGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/health&#x27;;
++};
++
++export type HealthHealthGetResponses = {
++  /**
++   * Successful Response
++   */
++  200: HealthStatus;
++};
++
++export type HealthHealthGetResponse = HealthHealthGetResponses[keyof HealthHealthGetResponses];
++
++export type ReadyReadyGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/ready&#x27;;
++};
++
++export type ReadyReadyGetResponses = {
++  /**
++   * Response Ready Ready Get
++   *
++   * Successful Response
++   */
++  200: {
++    [key: string]: string;
++  };
++};
++
++export type ReadyReadyGetResponse = ReadyReadyGetResponses[keyof ReadyReadyGetResponses];
++
++export type GetServerInfoServerInfoGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/server_info&#x27;;
++};
++
++export type GetServerInfoServerInfoGetResponses = {
++  /**
++   * Successful Response
++   */
++  200: ServerInfo;
++};
++
++export type GetServerInfoServerInfoGetResponse =
++  GetServerInfoServerInfoGetResponses[keyof GetServerInfoServerInfoGetResponses];
++
++export type CreateChatCompletionV1ChatCompletionsPostData = {
++  body: OpenAiChatCompletionRequest;
++  headers?: {
++    /**
++     * X-Openhands-Serverconversation-Id
++     */
++    &#x27;X-OpenHands-ServerConversation-ID&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Span-Name
++     */
++    &#x27;X-OpenHands-Observability-Span-Name&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Tags
++     */
++    &#x27;X-OpenHands-Observability-Tags&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Metadata
++     */
++    &#x27;X-OpenHands-Observability-Metadata&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Parent-Span-Context
++     */
++    &#x27;X-OpenHands-Observability-Parent-Span-Context&#x27;?: string | null;
++  };
++  path?: never;
++  query?: never;
++  url: &#x27;/v1/chat/completions&#x27;;
++};
++
++export type CreateChatCompletionV1ChatCompletionsPostErrors = {
++  /**
++   * Validation Error
++   */
++  422: HttpValidationError;
++};
++
++export type CreateChatCompletionV1ChatCompletionsPostError =
++  CreateChatCompletionV1ChatCompletionsPostErrors[keyof CreateChatCompletionV1ChatCompletionsPostErrors];
++
++export type CreateChatCompletionV1ChatCompletionsPostResponses = {
++  /**
++   * Successful Response
++   */
++  200: ChatCompletion;
++};
++
++export type CreateChatCompletionV1ChatCompletionsPostResponse =
++  CreateChatCompletionV1ChatCompletionsPostResponses[keyof CreateChatCompletionV1ChatCompletionsPostResponses];
++
++export type GetOpenaiModelsV1ModelsGetData = {
++  body?: never;
++  path?: never;
++  query?: never;
++  url: &#x27;/v1/models&#x27;;
++};
++
++export type GetOpenaiModelsV1ModelsGetResponses = {
++  /**
++   * Successful Response
++   */
++  200: OpenAiModelListResponse;
++};
++
++export type GetOpenaiModelsV1ModelsGetResponse =
++  GetOpenaiModelsV1ModelsGetResponses[keyof GetOpenaiModelsV1ModelsGetResponses];
++
++export type CreateResponseV1ResponsesPostData = {
++  body: OpenAiResponseRequest;
++  headers?: {
++    /**
++     * X-Openhands-Observability-Span-Name
++     */
++    &#x27;X-OpenHands-Observability-Span-Name&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Tags
++     */
++    &#x27;X-OpenHands-Observability-Tags&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Metadata
++     */
++    &#x27;X-OpenHands-Observability-Metadata&#x27;?: string | null;
++    /**
++     * X-Openhands-Observability-Parent-Span-Context
++     */
++    &#x27;X-OpenHands-Observability-Parent-Span-Context&#x27;?: string | null;
++  };
++  path?: never;
++  query?: never;
++  url: &#x27;/v1/responses&#x27;;
++};
++
++export type CreateResponseV1ResponsesPostErrors = {
++  /**
++   * Validation Error
++   */
++  422: HttpValidationError;
++};
++
++export type CreateResponseV1ResponsesPostError =
++  CreateResponseV1ResponsesPostErrors[keyof CreateResponseV1ResponsesPostErrors];
++
++export type CreateResponseV1ResponsesPostResponses = {
++  /**
++   * Successful Response
++   */
++  200: OpenAiResponse;
++};
++
++export type CreateResponseV1ResponsesPostResponse =
++  CreateResponseV1ResponsesPostResponses[keyof CreateResponseV1ResponsesPostResponses];
+</pre></details></section><section id="openhands-sdk/openhands/sdk/agent/acp_agent.py"><h2>openhands-sdk/openhands/sdk/agent/acp_agent.py</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/openhands-sdk/openhands/sdk/agent/acp_agent.py">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/openhands-sdk/openhands/sdk/agent/acp_agent.py">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/openhands-sdk/openhands/sdk/agent/acp_agent.py b/openhands-sdk/openhands/sdk/agent/acp_agent.py
+index e3e9f372..e9cec0b9 100644
+--- a/openhands-sdk/openhands/sdk/agent/acp_agent.py
++++ b/openhands-sdk/openhands/sdk/agent/acp_agent.py
+@@ -1749,6 +1749,13 @@ class ACPAgent(AgentBase):
+         default_factory=list,
+         description=&quot;Additional arguments for the ACP server command&quot;,
+     )
++    acp_auth_method: str | None = Field(
++        default=None,
++        description=(
++            &quot;Explicit advertised ACP authentication method; &quot;
++            &quot;None keeps credential-based selection.&quot;
++        ),
++    )
+     acp_session_mode: str | None = Field(
+         default=None,
+         description=(
+@@ -3055,6 +3062,7 @@ class ACPAgent(AgentBase):
+                 stdout=asyncio.subprocess.PIPE,
+                 stderr=asyncio.subprocess.PIPE,
+                 env=env,
++                cwd=working_dir,
+                 limit=_STREAM_READER_LIMIT,
+             )
+             assert process.stdin is not None
+@@ -3128,8 +3136,17 @@ class ACPAgent(AgentBase):
+             # before session creation.  We auto-detect the method from
+             # the env vars that are available to the process.
+             auth_methods = init_response.auth_methods or []
+-            if auth_methods:
+-                method_id = _select_auth_method(auth_methods, env)
++            if auth_methods or self.acp_auth_method:
++                if self.acp_auth_method is not None:
++                    if self.acp_auth_method not in {
++                        method.id for method in auth_methods
++                    }:
++                        raise ValueError(
++                            &quot;Konfigurierte ACP-Anmeldemethode wurde nicht angeboten&quot;
++                        )
++                    method_id = self.acp_auth_method
++                else:
++                    method_id = _select_auth_method(auth_methods, env)
+                 if method_id is not None:
+                     logger.info(&quot;Authenticating with ACP method: %s&quot;, method_id)
+                     auth_kwargs: dict[str, Any] = {}
+</pre></details></section><section id="openhands-sdk/openhands/sdk/agent/acp_model_discovery.py"><h2>openhands-sdk/openhands/sdk/agent/acp_model_discovery.py</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py b/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py
+index e8de745a..944e88d1 100644
+--- a/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py
++++ b/openhands-sdk/openhands/sdk/agent/acp_model_discovery.py
+@@ -43,6 +43,7 @@ def discover_acp_models(
+         acp_args=list(settings.acp_args),
+         acp_session_mode=settings.acp_session_mode,
+         acp_startup_timeout=settings.acp_startup_timeout,
++        acp_auth_method=settings.acp_auth_method,
+         acp_isolate_data_dir=settings.acp_isolate_data_dir,
+         acp_file_secrets=list(settings.acp_file_secrets),
+     )
+</pre></details></section><section id="openhands-sdk/openhands/sdk/settings/model.py"><h2>openhands-sdk/openhands/sdk/settings/model.py</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/openhands-sdk/openhands/sdk/settings/model.py">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/openhands-sdk/openhands/sdk/settings/model.py">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/openhands-sdk/openhands/sdk/settings/model.py b/openhands-sdk/openhands/sdk/settings/model.py
+index 88ade0ee..f14bf05e 100644
+--- a/openhands-sdk/openhands/sdk/settings/model.py
++++ b/openhands-sdk/openhands/sdk/settings/model.py
+@@ -1777,6 +1777,13 @@ class ACPAgentSettings(AgentSettingsBase):
+             ).model_dump(),
+         },
+     )
++    acp_auth_method: str | None = Field(
++        default=None,
++        description=(
++            &quot;Explicit advertised ACP authentication method; &quot;
++            &quot;None keeps credential-based selection.&quot;
++        ),
++    )
+     acp_startup_timeout: float = Field(
+         default=90.0,
+         gt=0,
+@@ -2036,6 +2043,7 @@ class ACPAgentSettings(AgentSettingsBase):
+             acp_session_mode=self.acp_session_mode,
+             acp_prompt_timeout=self.acp_prompt_timeout,
+             acp_startup_timeout=self.acp_startup_timeout,
++            acp_auth_method=self.acp_auth_method,
+             acp_isolate_data_dir=self.acp_isolate_data_dir,
+             acp_file_secrets=list(self.acp_file_secrets),
+             agent_context=self.agent_context,
+</pre></details></section><section id="openhands-sdk/pyproject.toml"><h2>openhands-sdk/pyproject.toml</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/openhands-sdk/pyproject.toml">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/openhands-sdk/pyproject.toml">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/openhands-sdk/pyproject.toml b/openhands-sdk/pyproject.toml
+index 160610fc..b8df971c 100644
+--- a/openhands-sdk/pyproject.toml
++++ b/openhands-sdk/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = &quot;openhands-sdk&quot;
+-version = &quot;1.55.1&quot;
++version = &quot;1.55.1+cliscade.1&quot;
+ description = &quot;OpenHands SDK - Core functionality for building AI agents&quot;
+ 
+ requires-python = &quot;&gt;=3.12&quot;
+</pre></details></section><section id="tests/sdk/agent/fake_acp_auth_server.py"><h2>tests/sdk/agent/fake_acp_auth_server.py</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/tests/sdk/agent/fake_acp_auth_server.py">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/tests/sdk/agent/fake_acp_auth_server.py">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/tests/sdk/agent/fake_acp_auth_server.py b/tests/sdk/agent/fake_acp_auth_server.py
+new file mode 100644
+index 00000000..e08f3ca0
+--- /dev/null
++++ b/tests/sdk/agent/fake_acp_auth_server.py
+@@ -0,0 +1,56 @@
++&quot;&quot;&quot;Kontrollierter ACP-Server für Anmeldung und tatsächliches Prozessverzeichnis.&quot;&quot;&quot;
++
++import json
++import os
++import sys
++from pathlib import Path
++
++
++def respond(request, result=None, error=None):
++    response = {&quot;jsonrpc&quot;: &quot;2.0&quot;, &quot;id&quot;: request[&quot;id&quot;]}
++    response[&quot;error&quot; if error else &quot;result&quot;] = error or result or {}
++    print(json.dumps(response), flush=True)
++
++
++signed = False
++for line in sys.stdin:
++    request = json.loads(line)
++    method = request[&quot;method&quot;]
++    params = request.get(&quot;params&quot;, {})
++    if method == &quot;initialize&quot;:
++        respond(
++            request,
++            {
++                &quot;protocolVersion&quot;: 1,
++                &quot;authMethods&quot;: [{&quot;id&quot;: &quot;oauth-personal&quot;, &quot;name&quot;: &quot;Google&quot;}],
++            },
++        )
++    elif method == &quot;authenticate&quot;:
++        signed = params[&quot;methodId&quot;] == &quot;oauth-personal&quot;
++        respond(request)
++    elif method == &quot;session/new&quot;:
++        if not signed:
++            respond(
++                request, error={&quot;code&quot;: -32000, &quot;message&quot;: &quot;Authentication required&quot;}
++            )
++            continue
++        Path(&quot;native-start.json&quot;).write_text(
++            json.dumps(
++                {
++                    &quot;process_cwd&quot;: os.getcwd(),
++                    &quot;session_cwd&quot;: params[&quot;cwd&quot;],
++                }
++            )
++        )
++        respond(
++            request,
++            {
++                &quot;sessionId&quot;: &quot;test&quot;,
++                &quot;models&quot;: {
++                    &quot;currentModelId&quot;: &quot;test&quot;,
++                    &quot;availableModels&quot;: [{&quot;modelId&quot;: &quot;test&quot;, &quot;name&quot;: &quot;Test&quot;}],
++                },
++            },
++        )
++    elif &quot;id&quot; in request:
++        respond(request)
+</pre></details></section><section id="tests/sdk/agent/test_acp_start_context.py"><h2>tests/sdk/agent/test_acp_start_context.py</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/tests/sdk/agent/test_acp_start_context.py">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/tests/sdk/agent/test_acp_start_context.py">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/tests/sdk/agent/test_acp_start_context.py b/tests/sdk/agent/test_acp_start_context.py
+new file mode 100644
+index 00000000..41edf6b9
+--- /dev/null
++++ b/tests/sdk/agent/test_acp_start_context.py
+@@ -0,0 +1,52 @@
++&quot;&quot;&quot;ACP-Startverzeichnis und explizite Anmeldung über echte stdio-Prozesse.&quot;&quot;&quot;
++
++import json
++import sys
++from pathlib import Path
++
++from openhands.sdk import Conversation
++from openhands.sdk.agent.acp_model_discovery import discover_acp_models
++from openhands.sdk.settings.model import ACPAgentSettings
++
++
++def fixture(tmp_path):
++    return [sys.executable, str(Path(__file__).with_name(&quot;fake_acp_auth_server.py&quot;))]
++
++
++def test_start_uses_workspace_and_auth_survives_serialization(tmp_path):
++    command = fixture(tmp_path)
++    workspace = tmp_path / &quot;workspace&quot;
++    workspace.mkdir()
++    settings = ACPAgentSettings(
++        acp_server=&quot;custom&quot;, acp_command=command, acp_auth_method=&quot;oauth-personal&quot;
++    )
++    restored = ACPAgentSettings.model_validate(settings.model_dump(mode=&quot;json&quot;))
++    agent = restored.create_agent()
++    assert agent.acp_auth_method == &quot;oauth-personal&quot;
++    conversation = Conversation(
++        agent=agent,
++        workspace=str(workspace),
++        persistence_dir=str(tmp_path / &quot;state&quot;),
++        visualizer=None,
++    )
++    try:
++        conversation.send_message(&quot;Nur initialisieren&quot;)
++        with conversation.state:
++            agent.init_state(conversation.state, on_event=lambda event: None)
++        proof = json.loads((workspace / &quot;native-start.json&quot;).read_text())
++        assert proof == {&quot;process_cwd&quot;: str(workspace), &quot;session_cwd&quot;: str(workspace)}
++    finally:
++        conversation.close()
++        agent.close()
++
++
++def test_discovery_uses_explicit_auth_and_rejects_unknown_method(tmp_path):
++    command = fixture(tmp_path)
++    settings = ACPAgentSettings(
++        acp_server=&quot;custom&quot;, acp_command=command, acp_auth_method=&quot;oauth-personal&quot;
++    )
++    assert discover_acp_models(settings, work_root=tmp_path).error is None
++    settings.acp_auth_method = &quot;not-advertised&quot;
++    result = discover_acp_models(settings, work_root=tmp_path)
++    assert result.error is not None
++    assert &quot;nicht angeboten&quot; in result.error.detail
+</pre></details></section><section id="uv.lock"><h2>uv.lock</h2><p><a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/5fa4dea24c52fe3ac53fa4e3e67a1376b72189e2/uv.lock">Basis</a> · <a href="https://github.com/ysamjo/CLIScade-Next-SDK/blob/099e727faeb869171564a4d09276f576a07c4400/uv.lock">Geprüfter Code</a></p><details><summary>Diff</summary><pre>diff --git a/uv.lock b/uv.lock
+index d20e8256..6ac167f7 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -2840,7 +2840,7 @@ provides-extras = [&quot;posthog&quot;]
+ 
+ [[package]]
+ name = &quot;openhands-sdk&quot;
+-version = &quot;1.55.1&quot;
++version = &quot;1.55.1+cliscade.1&quot;
+ source = { editable = &quot;openhands-sdk&quot; }
+ dependencies = [
+     { name = &quot;agent-client-protocol&quot; },
+@@ -3945,7 +3945,6 @@ dependencies = [
+     { name = &quot;pyobjc-framework-photos&quot;, marker = &quot;(platform_release &gt;= &#x27;15.0&#x27; and sys_platform != &#x27;darwin&#x27;) or (platform_release &gt;= &#x27;15&#x27; and sys_platform == &#x27;darwin&#x27;)&quot; },
+     { name = &quot;pyobjc-framework-photosui&quot;, marker = &quot;(platform_release &gt;= &#x27;15.0&#x27; and sys_platform != &#x27;darwin&#x27;) or (platform_release &gt;= &#x27;15&#x27; and sys_platform == &#x27;darwin&#x27;)&quot; },
+     { name = &quot;pyobjc-framework-preferencepanes&quot; },
+-    { name = &quot;pyobjc-framework-pubsub&quot;, marker = &quot;platform_release &gt;= &#x27;9&#x27; and platform_release &lt; &#x27;18&#x27; and sys_platform == &#x27;darwin&#x27;&quot; },
+     { name = &quot;pyobjc-framework-pushkit&quot;, marker = &quot;(platform_release &gt;= &#x27;19.0&#x27; and sys_platform != &#x27;darwin&#x27;) or (platform_release &gt;= &#x27;19&#x27; and sys_platform == &#x27;darwin&#x27;)&quot; },
+     { name = &quot;pyobjc-framework-quartz&quot; },
+     { name = &quot;pyobjc-framework-quicklookthumbnailing&quot;, marker = &quot;(platform_release &gt;= &#x27;19.0&#x27; and sys_platform != &#x27;darwin&#x27;) or (platform_release &gt;= &#x27;19&#x27; and sys_platform == &#x27;darwin&#x27;)&quot; },
+@@ -5849,19 +5848,6 @@ wheels = [
+     { url = &quot;https://files.pythonhosted.org/packages/a1/51/75c7e32272241f706ce8168e04a32be02c4b0c244358330f730fc85695c3/pyobjc_framework_preferencepanes-11.1-py2.py3-none-any.whl&quot;, hash = &quot;sha256:6ee5f5a7eb294e03ea3bac522ac4b69e6dc83ceceff627a0a2d289afe1e01ad9&quot;, size = 4786, upload-time = &quot;2025-06-14T20:53:25.603Z&quot; },
+ ]
+ 
+-[[package]]
+-name = &quot;pyobjc-framework-pubsub&quot;
+-version = &quot;11.1&quot;
+-source = { registry = &quot;https://pypi.org/simple&quot; }
+-dependencies = [
+-    { name = &quot;pyobjc-core&quot; },
+-    { name = &quot;pyobjc-framework-cocoa&quot; },
+-]
+-sdist = { url = &quot;https://files.pythonhosted.org/packages/b5/74/640059089ae11564147a9594358956140ca5a3c9bec40e42ac9001685002/pyobjc_framework_pubsub-11.1.tar.gz&quot;, hash = &quot;sha256:47221f63466c523516ab5d2297dd3c644d915a77ca1f1867b0055d735486f1f8&quot;, size = 16177, upload-time = &quot;2025-06-14T20:58:15.014Z&quot; }
+-wheels = [
+-    { url = &quot;https://files.pythonhosted.org/packages/27/da/b2d627cd6aecc057a9a69e4552999660a26c818e9d3461a0c49554e2af12/pyobjc_framework_pubsub-11.1-py2.py3-none-any.whl&quot;, hash = &quot;sha256:cea6bd9e0af46f9ea1c8d002a92e462576dd5a772a7e0688d40c7903755af11f&quot;, size = 5176, upload-time = &quot;2025-06-14T20:53:26.431Z&quot; },
+-]
+-
+ [[package]]
+ name = &quot;pyobjc-framework-pushkit&quot;
+ version = &quot;11.1&quot;
+</pre></details></section></html>
