@@ -1,3 +1,7 @@
+> CLIScade-Next-SDK: Integrationsfork für explizite ACP-Kontoanmeldung und den
+> Start nativer ACP-Prozesse im jeweiligen Workspace. Änderungen und Prüfbefehle:
+> [CLISCADE_NEXT.md](CLISCADE_NEXT.md).
+
 <a name="readme-top"></a>
 
 <div align="center">

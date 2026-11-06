@@ -1777,6 +1777,13 @@ class ACPAgentSettings(AgentSettingsBase):
             ).model_dump(),
         },
     )
+    acp_auth_method: str | None = Field(
+        default=None,
+        description=(
+            "Explicit advertised ACP authentication method; "
+            "None keeps credential-based selection."
+        ),
+    )
     acp_startup_timeout: float = Field(
         default=90.0,
         gt=0,
@@ -2036,6 +2043,7 @@ class ACPAgentSettings(AgentSettingsBase):
             acp_session_mode=self.acp_session_mode,
             acp_prompt_timeout=self.acp_prompt_timeout,
             acp_startup_timeout=self.acp_startup_timeout,
+            acp_auth_method=self.acp_auth_method,
             acp_isolate_data_dir=self.acp_isolate_data_dir,
             acp_file_secrets=list(self.acp_file_secrets),
             agent_context=self.agent_context,

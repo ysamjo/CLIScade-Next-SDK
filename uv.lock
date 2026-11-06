@@ -2840,7 +2840,7 @@ provides-extras = ["posthog"]
 
 [[package]]
 name = "openhands-sdk"
-version = "1.55.1"
+version = "1.55.1+cliscade.1"
 source = { editable = "openhands-sdk" }
 dependencies = [
     { name = "agent-client-protocol" },
@@ -3945,7 +3945,6 @@ dependencies = [
     { name = "pyobjc-framework-photos", marker = "(platform_release >= '15.0' and sys_platform != 'darwin') or (platform_release >= '15' and sys_platform == 'darwin')" },
     { name = "pyobjc-framework-photosui", marker = "(platform_release >= '15.0' and sys_platform != 'darwin') or (platform_release >= '15' and sys_platform == 'darwin')" },
     { name = "pyobjc-framework-preferencepanes" },
-    { name = "pyobjc-framework-pubsub", marker = "platform_release >= '9' and platform_release < '18' and sys_platform == 'darwin'" },
     { name = "pyobjc-framework-pushkit", marker = "(platform_release >= '19.0' and sys_platform != 'darwin') or (platform_release >= '19' and sys_platform == 'darwin')" },
     { name = "pyobjc-framework-quartz" },
     { name = "pyobjc-framework-quicklookthumbnailing", marker = "(platform_release >= '19.0' and sys_platform != 'darwin') or (platform_release >= '19' and sys_platform == 'darwin')" },
@@ -5847,19 +5846,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/34/ac/9324602daf9916308ebf1935b8a4b91c93b9ae993dcd0da731c0619c2836/pyobjc_framework_preferencepanes-11.1.tar.gz", hash = "sha256:6e4a55195ec9fc921e0eaad6b3038d0ab91f0bb2f39206aa6fccd24b14a0f1d8", size = 26212, upload-time = "2025-06-14T20:58:14.361Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a1/51/75c7e32272241f706ce8168e04a32be02c4b0c244358330f730fc85695c3/pyobjc_framework_preferencepanes-11.1-py2.py3-none-any.whl", hash = "sha256:6ee5f5a7eb294e03ea3bac522ac4b69e6dc83ceceff627a0a2d289afe1e01ad9", size = 4786, upload-time = "2025-06-14T20:53:25.603Z" },
-]
-
-[[package]]
-name = "pyobjc-framework-pubsub"
-version = "11.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pyobjc-core" },
-    { name = "pyobjc-framework-cocoa" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/74/640059089ae11564147a9594358956140ca5a3c9bec40e42ac9001685002/pyobjc_framework_pubsub-11.1.tar.gz", hash = "sha256:47221f63466c523516ab5d2297dd3c644d915a77ca1f1867b0055d735486f1f8", size = 16177, upload-time = "2025-06-14T20:58:15.014Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/27/da/b2d627cd6aecc057a9a69e4552999660a26c818e9d3461a0c49554e2af12/pyobjc_framework_pubsub-11.1-py2.py3-none-any.whl", hash = "sha256:cea6bd9e0af46f9ea1c8d002a92e462576dd5a772a7e0688d40c7903755af11f", size = 5176, upload-time = "2025-06-14T20:53:26.431Z" },
 ]
 
 [[package]]
